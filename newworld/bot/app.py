@@ -17,7 +17,7 @@ from aiogram.types import CallbackQuery, Message
 from ..core.engine import InvalidAction, Turn
 from ..views import render_status
 from .keyboards import action_keyboard, hero_keyboard, parse_action, parse_hero
-from .service import GameService, StaleAction
+from .service import GameService, SaveOutdated, StaleAction
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,14 @@ def build_router(game: GameService) -> Router:
         user = message.from_user
         if user is None:
             return
-        existing = await game.resume(user.id)
+        try:
+            existing = await game.resume(user.id)
+        except SaveOutdated:
+            await message.answer(
+                "Сюжет с тех пор обновился, и прошлый забег продолжить нельзя. "
+                "Начинаем заново — теперь есть из кого выбрать."
+            )
+            existing = None
         if existing is not None and existing.options:
             await message.answer("У тебя есть незаконченный забег. Продолжаем.")
             await send_turn(message, existing)
@@ -121,7 +128,10 @@ def build_router(game: GameService) -> Router:
         user = message.from_user
         if user is None:
             return
-        turn = await game.resume(user.id)
+        try:
+            turn = await game.resume(user.id)
+        except SaveOutdated:
+            turn = None
         if turn is None:
             await message.answer("Забег ещё не начат. /new — начать.")
             return
@@ -160,6 +170,12 @@ def build_router(game: GameService) -> Router:
         expected_turn, option_index = parsed
         try:
             turn = await game.act(user.id, expected_turn, option_index)
+        except SaveOutdated:
+            await callback.answer(
+                "Сюжет обновился — этот забег продолжить нельзя. Нажми /new",
+                show_alert=True,
+            )
+            return
         except StaleAction as exc:
             # Частый случай: игрок пролистал вверх и жмёт старую кнопку.
             await callback.answer(str(exc), show_alert=True)

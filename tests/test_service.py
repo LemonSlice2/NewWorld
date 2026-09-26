@@ -107,3 +107,73 @@ def test_parse_action_rejects_foreign_data():
     assert parse_action("a:1") is None
     assert parse_action("a:x:y") is None
     assert parse_action("b:1:2") is None
+
+
+# --- сохранения от прежней версии сюжета ------------------------------
+
+
+@pytest.fixture
+def stale_save(game):
+    """Забег, ссылающийся на сцену, которой в сюжете больше нет."""
+    from newworld.core.models import Character, GameState
+
+    async def put(user_id: int, scene_id: str = "снесённая_сцена", story_id: str = "olhovets"):
+        state = GameState(
+            character=Character(name="Путник"), scene_id=scene_id, seed=1, turn=3
+        )
+        await game.store.save(user_id, story_id, state)
+
+    return put
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_save_from_an_older_story(game, stale_save):
+    """Сюжет меняется постоянно; забег на исчезнувшую сцену не должен
+    ронять бота."""
+    from newworld.bot.service import SaveOutdated
+
+    await stale_save(20)
+    with pytest.raises(SaveOutdated):
+        await game.resume(20)
+
+
+@pytest.mark.asyncio
+async def test_outdated_save_is_discarded_so_the_player_can_start_over(game, stale_save):
+    from newworld.bot.service import SaveOutdated
+
+    await stale_save(21)
+    with pytest.raises(SaveOutdated):
+        await game.resume(21)
+    assert await game.store.load(21) is None
+    assert await game.resume(21) is None  # второй заход уже чистый
+
+
+@pytest.mark.asyncio
+async def test_action_on_outdated_save_is_rejected(game, stale_save):
+    from newworld.bot.service import SaveOutdated
+
+    await stale_save(22)
+    with pytest.raises(SaveOutdated):
+        await game.act(22, expected_turn=3, option_index=0)
+
+
+@pytest.mark.asyncio
+async def test_save_from_another_story_file_is_rejected(game, stale_save):
+    """К боту подключили другой сюжет — чужой забег продолжать нельзя."""
+    from newworld.bot.service import SaveOutdated
+
+    await stale_save(23, scene_id=game.story.start_scene, story_id="совсем_другая_история")
+    with pytest.raises(SaveOutdated):
+        await game.resume(23)
+
+
+@pytest.mark.asyncio
+async def test_hero_choice_defines_available_actions(game):
+    """Разные персонажи в одной сцене видят разные варианты."""
+    seen = {}
+    for user_id, archetype in enumerate(game.archetypes, start=30):
+        turn = await game.start_new(user_id, "Коля", archetype)
+        seen[archetype.id] = {o.id for o in turn.options}
+    assert len(set(map(frozenset, seen.values()))) == len(seen), (
+        f"персонажи не отличаются набором действий: {seen}"
+    )

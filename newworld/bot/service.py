@@ -14,12 +14,22 @@ from ..core.content import Archetype, Story
 from ..core.creation import character_from_archetype, roll_character
 from ..core.engine import Engine, InvalidAction, Turn
 from ..core.events import SceneEntered
+from ..core.models import GameState
 from ..narrator.base import Narrator
 from ..storage import SaveStore
 
 
 class StaleAction(InvalidAction):
     """Нажата кнопка из устаревшего сообщения."""
+
+
+class SaveOutdated(Exception):
+    """Сохранение не подходит к текущему сюжету.
+
+    Сюжет живёт и меняется: сцену переименовали, историю переписали, к боту
+    подключили другой файл. Забег, который ссылается на исчезнувшую сцену,
+    продолжить нельзя — но и падать из-за этого бот не должен.
+    """
 
 
 @dataclass
@@ -62,12 +72,22 @@ class GameService:
         await self.store.save(user_id, self.story_id, turn.state)
         return turn
 
-    async def resume(self, user_id: int) -> Turn | None:
-        """Восстановить забег и показать текущую сцену без новых событий."""
+    async def _load_state(self, user_id: int) -> GameState | None:
+        """Загрузить сохранение, отбросив несовместимое с текущим сюжетом."""
         saved = await self.store.load(user_id)
         if saved is None:
             return None
-        _, state = saved
+        story_id, state = saved
+        if story_id != self.story_id or state.scene_id not in self.story.scenes:
+            await self.store.delete(user_id)
+            raise SaveOutdated(state.scene_id)
+        return state
+
+    async def resume(self, user_id: int) -> Turn | None:
+        """Восстановить забег и показать текущую сцену без новых событий."""
+        state = await self._load_state(user_id)
+        if state is None:
+            return None
         scene = self.story.scene(state.scene_id)
         return Turn(
             state=state,
@@ -85,10 +105,9 @@ class GameService:
         вверх сообщении, и выполнять это действие нельзя: список вариантов
         с тех пор мог смениться целиком.
         """
-        saved = await self.store.load(user_id)
-        if saved is None:
+        state = await self._load_state(user_id)
+        if state is None:
             raise StaleAction("Забег не найден — начни новый командой /new")
-        _, state = saved
         if state.turn != expected_turn:
             raise StaleAction("Это кнопка из старого сообщения")
         options = self.engine.available_options(state)
