@@ -14,8 +14,8 @@ import random
 import sys
 
 from .core.content import ContentError, Story
-from .core.content import Archetype
-from .core.creation import character_from_archetype, roll_character
+from .core.content import CharacterClass, Subclass
+from .core.creation import build_character, roll_character, starting_flags
 from .core.engine import Engine, InvalidAction, Turn
 from .narrator import TemplateNarrator
 from .views import render_options_plain, render_status, strip_html
@@ -23,27 +23,55 @@ from .views import render_options_plain, render_status, strip_html
 RULE = "─" * 60
 
 
-def choose_archetype(archetypes: tuple[Archetype, ...], preset: str | None) -> Archetype | None:
-    """Спросить, кем играть. None — в сюжете нет готовых героев."""
-    if not archetypes:
-        return None
-    if preset is not None:
-        for archetype in archetypes:
-            if archetype.id == preset:
-                return archetype
-        known = ", ".join(a.id for a in archetypes)
-        raise SystemExit(f"Нет персонажа {preset!r}. Доступны: {known}")
-    print(f"\n{RULE}\nКЕМ ИГРАЕШЬ?\n{RULE}")
-    for index, archetype in enumerate(archetypes, 1):
-        print(f"\n  {index}. {archetype.name} — {archetype.tagline}")
+def pick(title: str, items: list, describe) -> object:
+    """Спросить выбор из списка. Возвращает выбранный элемент."""
+    print(f"\n{RULE}\n{title}\n{RULE}")
+    for index, item in enumerate(items, 1):
+        print(f"\n  {index}. {describe(item)}")
     while True:
         try:
             raw = input("\nВыбор (номер): ").strip()
         except (EOFError, KeyboardInterrupt):
             raise SystemExit("\nДо встречи.") from None
-        if raw.isdigit() and 1 <= int(raw) <= len(archetypes):
-            return archetypes[int(raw) - 1]
+        if raw.isdigit() and 1 <= int(raw) <= len(items):
+            return items[int(raw) - 1]
         print("Не понял. Введи номер.")
+
+
+def create_character(story, preset_class: str | None, preset_name: str | None):
+    """Провести игрока по созданию персонажа: класс, специализация, имя."""
+    if not story.classes:
+        return None, None, preset_name or "Путник"
+
+    if preset_class is not None:
+        character_class = next((c for c in story.classes if c.id == preset_class), None)
+        if character_class is None:
+            known = ", ".join(c.id for c in story.classes)
+            raise SystemExit(f"Нет класса {preset_class!r}. Доступны: {known}")
+    else:
+        character_class = pick(
+            "КЕМ ТЫ БЫЛ ДО ЭТОЙ ДОРОГИ?",
+            list(story.classes),
+            lambda c: f"{c.name} — {c.tagline}",
+        )
+        print(f"\n{strip_html(character_class.description)}")
+
+    subclass = None
+    if character_class.subclasses:
+        subclass = pick(
+            "ЧЕМ ТЫ ЗАНИМАЛСЯ В ЭТОМ РЕМЕСЛЕ?",
+            list(character_class.subclasses),
+            lambda s: f"{s.name} — {s.tagline}",
+        )
+        print(f"\n{strip_html(subclass.description)}")
+
+    name = preset_name
+    if name is None:
+        try:
+            name = input("\nКак его зовут? (пусто — по ремеслу): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit("\nДо встречи.") from None
+    return character_class, subclass, name
 
 
 def show(turn: Turn, narrator: TemplateNarrator) -> None:
@@ -57,9 +85,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Текстовая игра в терминале")
     parser.add_argument("story", help="путь к YAML-файлу сюжета")
     parser.add_argument("--seed", type=int, default=None, help="сид для воспроизводимого забега")
-    parser.add_argument("--name", default="Путник", help="имя персонажа")
+    parser.add_argument("--name", default=None, help="имя персонажа (без него — спросит)")
     parser.add_argument("--hide-rolls", action="store_true", help="не показывать броски костей")
-    parser.add_argument("--hero", default=None, help="id персонажа (без него — спросит)")
+    parser.add_argument("--hero", default=None, help="id класса (без него — спросит)")
     args = parser.parse_args(argv)
 
     try:
@@ -77,14 +105,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{RULE}\n{title.upper()}\n{RULE}\n")
         print(strip_html(story.world_intro))
 
-    archetype = choose_archetype(story.archetypes, args.hero)
-    if archetype is not None:
-        character = character_from_archetype(archetype)
-        flags = archetype.flags
-        print(f"\n{RULE}\nТы — {archetype.name.upper()}\n{RULE}\n")
-        print(strip_html(archetype.description))
+    character_class, subclass, name = create_character(story, args.hero, args.name)
+    if character_class is not None:
+        character = build_character(name or "", character_class, subclass)
+        flags = starting_flags(character_class, subclass)
+        print(f"\n{RULE}\n{character.name.upper()} — {character.origin}\n{RULE}")
     else:
-        character = roll_character(args.name, random.Random(seed))
+        character = roll_character(name or "Путник", random.Random(seed))
         flags = ()
 
     turn = engine.start(character, seed=seed, flags=flags)

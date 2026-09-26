@@ -29,8 +29,10 @@ def health_bar(character: Character, width: int = 10) -> str:
 
 def render_status(character: Character) -> str:
     """Карточка персонажа: то, что игрок должен видеть постоянно."""
-    lines = [
-        f"<b>{html.escape(character.name)}</b>",
+    lines = [f"<b>{html.escape(character.name)}</b>"]
+    if character.origin:
+        lines.append(f"<i>{html.escape(character.origin)}</i>")
+    lines += [
         f"❤️ {character.hp}/{character.max_hp}  {health_bar(character)}",
         f"🪙 {character.gold}",
     ]

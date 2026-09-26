@@ -10,8 +10,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from ..core.content import Archetype, Story
-from ..core.creation import character_from_archetype, roll_character
+from ..core.content import CharacterClass, Story, Subclass
+from ..core.creation import build_character, roll_character, starting_flags
 from ..core.engine import Engine, InvalidAction, Turn
 from ..core.events import SceneEntered
 from ..core.models import GameState
@@ -51,20 +51,21 @@ class GameService:
         )
 
     @property
-    def archetypes(self) -> tuple[Archetype, ...]:
-        return self.story.archetypes
+    def classes(self) -> tuple[CharacterClass, ...]:
+        return self.story.classes
 
     async def start_new(
         self,
         user_id: int,
         name: str,
-        archetype: Archetype | None = None,
+        character_class: CharacterClass | None = None,
+        subclass: Subclass | None = None,
     ) -> Turn:
-        """Начать забег. Без архетипа персонаж бросается случайно."""
+        """Начать забег. Без класса персонаж бросается случайно."""
         seed = random.SystemRandom().randrange(2**31)
-        if archetype is not None:
-            character = character_from_archetype(archetype)
-            flags = archetype.flags
+        if character_class is not None:
+            character = build_character(name, character_class, subclass)
+            flags = starting_flags(character_class, subclass)
         else:
             character = roll_character(name, random.Random(seed))
             flags = ()

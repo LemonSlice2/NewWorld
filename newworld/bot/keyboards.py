@@ -1,18 +1,21 @@
 """Клавиатуры.
 
 В ``callback_data`` Telegram отводит 64 байта, поэтому туда кладётся не
-описание действия, а его короткий адрес: номер хода и позиция варианта.
-Номер хода нужен, чтобы кнопка из прокрученного вверх сообщения не сработала.
+описание выбора, а его короткий адрес: позиции в списках и номер хода.
+Номер хода нужен, чтобы кнопка из прокрученного вверх сообщения не
+сработала во второй раз.
 """
 
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from ..core.content import Option
+from ..core.content import CharacterClass, Option
 
 ACTION_PREFIX = "a"
-HERO_PREFIX = "h"
+CLASS_PREFIX = "c"
+SUBCLASS_PREFIX = "s"
+SKIP_NAME = "noname"
 MAX_LABEL = 60
 
 
@@ -31,10 +34,67 @@ def action_keyboard(turn_number: int, options: tuple[Option, ...]) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def class_keyboard(classes: tuple[CharacterClass, ...]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=_clip(character_class.name),
+                callback_data=f"{CLASS_PREFIX}:{index}",
+            )
+        ]
+        for index, character_class in enumerate(classes)
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subclass_keyboard(class_index: int, character_class: CharacterClass) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=_clip(subclass.name),
+                callback_data=f"{SUBCLASS_PREFIX}:{class_index}:{index}",
+            )
+        ]
+        for index, subclass in enumerate(character_class.subclasses)
+    ]
+    rows.append(
+        [InlineKeyboardButton(text="← Другой класс", callback_data=f"{CLASS_PREFIX}:back")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def skip_name_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Оставить без имени", callback_data=SKIP_NAME)]
+        ]
+    )
+
+
 def parse_action(data: str) -> tuple[int, int] | None:
-    """Разобрать callback_data. None — чужие или испорченные данные."""
+    """Разобрать действие в сцене. None — чужие или испорченные данные."""
+    return _parse_pair(data, ACTION_PREFIX)
+
+
+def parse_class(data: str) -> int | None:
+    """Разобрать выбор класса. None — не выбор класса."""
     parts = data.split(":")
-    if len(parts) != 3 or parts[0] != ACTION_PREFIX:
+    if len(parts) != 2 or parts[0] != CLASS_PREFIX:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def parse_subclass(data: str) -> tuple[int, int] | None:
+    """Разобрать выбор специализации."""
+    return _parse_pair(data, SUBCLASS_PREFIX)
+
+
+def _parse_pair(data: str, prefix: str) -> tuple[int, int] | None:
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != prefix:
         return None
     try:
         return int(parts[1]), int(parts[2])
@@ -47,28 +107,3 @@ def _clip(label: str) -> str:
     if len(label) <= MAX_LABEL:
         return label
     return label[: MAX_LABEL - 1].rstrip() + "…"
-
-
-def hero_keyboard(archetypes: tuple) -> InlineKeyboardMarkup:
-    """Экран выбора персонажа. В кнопке — только позиция в списке."""
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=_clip(archetype.name),
-                callback_data=f"{HERO_PREFIX}:{index}",
-            )
-        ]
-        for index, archetype in enumerate(archetypes)
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def parse_hero(data: str) -> int | None:
-    """Разобрать выбор персонажа. None — чужие или испорченные данные."""
-    parts = data.split(":")
-    if len(parts) != 2 or parts[0] != HERO_PREFIX:
-        return None
-    try:
-        return int(parts[1])
-    except ValueError:
-        return None

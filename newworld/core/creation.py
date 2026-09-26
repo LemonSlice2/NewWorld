@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from .content import Archetype
+from .content import CharacterClass, Subclass
 from .models import Ability, Character
 
 
@@ -23,17 +23,44 @@ def roll_character(name: str, rng: random.Random) -> Character:
     return Character(name=name, abilities=abilities, hp=max_hp, max_hp=max_hp)
 
 
-def character_from_archetype(archetype: Archetype) -> Character:
-    """Готовый герой из сюжетного файла.
+def build_character(
+    name: str,
+    character_class: CharacterClass,
+    subclass: Subclass | None = None,
+) -> Character:
+    """Собрать героя: имя от игрока, всё остальное — от класса и специализации.
 
-    Характеристики заданы автором, а не случаем: игрок должен понимать, кем
-    он играет, ещё до первой сцены.
+    Подкласс не переписывает класс, а уточняет его: прибавляет к
+    характеристикам, добавляет вещь и своё снаряжение.
     """
+    abilities = dict(character_class.abilities)
+    max_hp = character_class.max_hp
+    items = list(character_class.items)
+    origin = character_class.name
+
+    if subclass is not None:
+        for ability, bonus in subclass.ability_bonus.items():
+            abilities[ability] = abilities.get(ability, 10) + bonus
+        max_hp += subclass.hp_bonus
+        items.extend(subclass.items)
+        origin = f"{character_class.name} · {subclass.name}"
+
     return Character(
-        name=archetype.name,
-        abilities=dict(archetype.abilities),
-        hp=archetype.max_hp,
-        max_hp=archetype.max_hp,
-        gold=archetype.gold,
-        inventory=list(archetype.items),
+        name=name.strip() or character_class.name,
+        origin=origin,
+        abilities=abilities,
+        hp=max_hp,
+        max_hp=max_hp,
+        gold=character_class.gold,
+        inventory=items,
     )
+
+
+def starting_flags(
+    character_class: CharacterClass, subclass: Subclass | None = None
+) -> tuple[str, ...]:
+    """Метки, с которыми герой выходит в мир: от класса и от специализации."""
+    flags = list(character_class.flags)
+    if subclass is not None:
+        flags.extend(subclass.flags)
+    return tuple(flags)

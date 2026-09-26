@@ -45,6 +45,9 @@ def modifier(score: int) -> int:
 @dataclass
 class Character:
     name: str
+    # Кем персонаж вышел в мир, например «Знахарь · Травница».
+    # Имя даёт игрок, происхождение — выбор класса и специализации.
+    origin: str = ""
     abilities: dict[Ability, int] = field(default_factory=lambda: dict(DEFAULT_ABILITIES))
     hp: int = 10
     max_hp: int = 10
@@ -75,6 +78,7 @@ class Character:
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "origin": self.origin,
             "abilities": {a.value: v for a, v in self.abilities.items()},
             "hp": self.hp,
             "max_hp": self.max_hp,
@@ -88,6 +92,7 @@ class Character:
         abilities.update({Ability(k): v for k, v in data.get("abilities", {}).items()})
         return cls(
             name=data["name"],
+            origin=data.get("origin", ""),
             abilities=abilities,
             hp=data.get("hp", 10),
             max_hp=data.get("max_hp", 10),

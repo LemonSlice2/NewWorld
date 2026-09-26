@@ -168,12 +168,25 @@ async def test_save_from_another_story_file_is_rejected(game, stale_save):
 
 
 @pytest.mark.asyncio
-async def test_hero_choice_defines_available_actions(game):
-    """Разные персонажи в одной сцене видят разные варианты."""
+async def test_build_choice_defines_available_actions(game):
+    """Разные сборки в одной сцене видят разные варианты."""
     seen = {}
-    for user_id, archetype in enumerate(game.archetypes, start=30):
-        turn = await game.start_new(user_id, "Коля", archetype)
-        seen[archetype.id] = {o.id for o in turn.options}
-    assert len(set(map(frozenset, seen.values()))) == len(seen), (
-        f"персонажи не отличаются набором действий: {seen}"
-    )
+    user_id = 30
+    for character_class in game.classes:
+        for subclass in character_class.subclasses:
+            turn = await game.start_new(user_id, "Коля", character_class, subclass)
+            seen[f"{character_class.id}/{subclass.id}"] = frozenset(o.id for o in turn.options)
+            user_id += 1
+    assert len(set(seen.values())) > 1, f"все сборки играют одинаково: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_player_name_is_kept_apart_from_the_craft(game):
+    character_class = game.classes[0]
+    turn = await game.start_new(40, "неважно", character_class, character_class.subclasses[0])
+    character = turn.state.character
+    assert character.name == "неважно"
+    assert character.origin.startswith(character_class.name)
+
+    resumed = await game.resume(40)
+    assert resumed.state.character.origin == character.origin

@@ -229,14 +229,74 @@ class Scene:
         )
 
 
-@dataclass(frozen=True)
-class Archetype:
-    """Кем игрок выходит в мир.
+def parse_abilities(
+    data: Any, where: str, base: dict[Ability, int] | None
+) -> dict[Ability, int]:
+    """Разобрать набор характеристик.
 
-    Архетип задаёт не только цифры, но и взгляд: стартовые флаги открывают
-    в сценах те действия, до которых додумался бы именно такой человек.
-    Поэтому выбор персонажа — это ещё и выбор доступных ходов.
+    ``base`` — значения по умолчанию для неуказанных характеристик; None
+    означает, что это прибавки, и указывать нужно только меняющиеся.
     """
+    if not isinstance(data, dict):
+        raise ContentError(f"{where}: характеристики должны быть словарём, получено {data!r}")
+    result = dict(base) if base is not None else {}
+    for key, value in data.items():
+        try:
+            ability = Ability(str(key).lower())
+        except ValueError:
+            allowed = ", ".join(a.value for a in Ability)
+            raise ContentError(
+                f"{where}: неизвестная характеристика {key!r}. Доступны: {allowed}"
+            ) from None
+        result[ability] = int(value)
+    return result
+
+
+@dataclass(frozen=True)
+class Subclass:
+    """Специализация внутри класса.
+
+    Подкласс не задаёт персонажа заново, а уточняет его: прибавка к
+    характеристикам, своя вещь и свой флаг. Флаг открывает в сценах
+    действия, на которые способен именно такой человек.
+    """
+
+    id: str
+    name: str
+    tagline: str
+    description: str
+    ability_bonus: dict[Ability, int] = field(default_factory=dict)
+    hp_bonus: int = 0
+    items: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
+
+    @classmethod
+    def parse(cls, data: Any, where: str) -> Subclass:
+        if not isinstance(data, dict):
+            raise ContentError(f"{where}: подкласс должен быть словарём, получено {data!r}")
+        for key in ("id", "name", "tagline", "description"):
+            if key not in data:
+                raise ContentError(f"{where}: подклассу нужен {key!r}")
+        unknown = set(data) - {
+            "id", "name", "tagline", "description", "ability_bonus", "hp_bonus", "items", "flags"
+        }
+        if unknown:
+            raise ContentError(f"{where}: неизвестные ключи: {', '.join(sorted(unknown))}")
+        return cls(
+            id=str(data["id"]),
+            name=str(data["name"]),
+            tagline=normalize_prose(str(data["tagline"])),
+            description=normalize_prose(str(data["description"])),
+            ability_bonus=parse_abilities(data.get("ability_bonus") or {}, where, base=None),
+            hp_bonus=int(data.get("hp_bonus", 0)),
+            items=tuple(str(i) for i in data.get("items", []) or []),
+            flags=tuple(str(f) for f in data.get("flags", []) or []),
+        )
+
+
+@dataclass(frozen=True)
+class CharacterClass:
+    """Кем игрок выходит в мир: ремесло, судьба и взгляд на происходящее."""
 
     id: str
     name: str
@@ -247,42 +307,47 @@ class Archetype:
     gold: int = 0
     items: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
+    subclasses: tuple[Subclass, ...] = ()
+
+    def subclass(self, subclass_id: str) -> Subclass:
+        for item in self.subclasses:
+            if item.id == subclass_id:
+                return item
+        raise ContentError(f"Специализация {subclass_id!r} не найдена у класса {self.id!r}")
 
     @classmethod
-    def parse(cls, data: Any, where: str) -> Archetype:
+    def parse(cls, data: Any, where: str) -> CharacterClass:
         if not isinstance(data, dict):
-            raise ContentError(f"{where}: персонаж должен быть словарём, получено {data!r}")
+            raise ContentError(f"{where}: класс должен быть словарём, получено {data!r}")
         for key in ("id", "name", "tagline", "description", "abilities"):
             if key not in data:
-                raise ContentError(f"{where}: персонажу нужен {key!r}")
+                raise ContentError(f"{where}: классу нужен {key!r}")
         unknown = set(data) - {
-            "id", "name", "tagline", "description", "abilities", "max_hp", "gold", "items", "flags"
+            "id", "name", "tagline", "description", "abilities",
+            "max_hp", "gold", "items", "flags", "subclasses",
         }
         if unknown:
             raise ContentError(f"{where}: неизвестные ключи: {', '.join(sorted(unknown))}")
-        raw_abilities = data["abilities"]
-        if not isinstance(raw_abilities, dict):
-            raise ContentError(f"{where}: 'abilities' должен быть словарём характеристик")
-        abilities = dict(DEFAULT_ABILITIES)
-        for key, value in raw_abilities.items():
-            try:
-                ability = Ability(str(key).lower())
-            except ValueError:
-                allowed = ", ".join(a.value for a in Ability)
-                raise ContentError(
-                    f"{where}: неизвестная характеристика {key!r}. Доступны: {allowed}"
-                ) from None
-            abilities[ability] = int(value)
+        subclasses = tuple(
+            Subclass.parse(item, f"{where}, подкласс [{i}]")
+            for i, item in enumerate(data.get("subclasses", []) or [])
+        )
+        seen: set[str] = set()
+        for subclass in subclasses:
+            if subclass.id in seen:
+                raise ContentError(f"{where}: подкласс {subclass.id!r} объявлен дважды")
+            seen.add(subclass.id)
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
             tagline=normalize_prose(str(data["tagline"])),
             description=normalize_prose(str(data["description"])),
-            abilities=abilities,
+            abilities=parse_abilities(data["abilities"], where, base=DEFAULT_ABILITIES),
             max_hp=int(data.get("max_hp", 10)),
             gold=int(data.get("gold", 0)),
             items=tuple(str(i) for i in data.get("items", []) or []),
             flags=tuple(str(f) for f in data.get("flags", []) or []),
+            subclasses=subclasses,
         )
 
 
@@ -292,15 +357,15 @@ class Story:
 
     start_scene: str
     scenes: dict[str, Scene] = field(default_factory=dict)
-    archetypes: tuple[Archetype, ...] = ()
+    classes: tuple[CharacterClass, ...] = ()
     world_title: str = ""
     world_intro: str = ""
 
-    def archetype(self, archetype_id: str) -> Archetype:
-        for item in self.archetypes:
-            if item.id == archetype_id:
+    def character_class(self, class_id: str) -> CharacterClass:
+        for item in self.classes:
+            if item.id == class_id:
                 return item
-        raise ContentError(f"Персонаж {archetype_id!r} не найден")
+        raise ContentError(f"Класс {class_id!r} не найден")
 
     def scene(self, scene_id: str) -> Scene:
         try:
@@ -325,22 +390,22 @@ class Story:
             if scene.id in scenes:
                 raise ContentError(f"{path}: сцена {scene.id!r} объявлена дважды")
             scenes[scene.id] = scene
-        archetypes = tuple(
-            Archetype.parse(item, f"{path}: archetypes[{i}]")
-            for i, item in enumerate(raw.get("archetypes", []) or [])
+        classes = tuple(
+            CharacterClass.parse(item, f"{path}: classes[{i}]")
+            for i, item in enumerate(raw.get("classes", []) or [])
         )
         seen_ids: set[str] = set()
-        for archetype in archetypes:
-            if archetype.id in seen_ids:
-                raise ContentError(f"{path}: персонаж {archetype.id!r} объявлен дважды")
-            seen_ids.add(archetype.id)
+        for character_class in classes:
+            if character_class.id in seen_ids:
+                raise ContentError(f"{path}: класс {character_class.id!r} объявлен дважды")
+            seen_ids.add(character_class.id)
         world = raw.get("world") or {}
         if not isinstance(world, dict):
             raise ContentError(f"{path}: 'world' должен быть словарём с 'title' и 'intro'")
         story = cls(
             start_scene=str(raw["start"]),
             scenes=scenes,
-            archetypes=archetypes,
+            classes=classes,
             world_title=str(world.get("title", "")),
             world_intro=normalize_prose(str(world.get("intro", ""))),
         )

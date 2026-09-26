@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
@@ -35,7 +36,7 @@ async def run(story_path: str, db_path: str, token: str) -> None:
         store=SaveStore(db_path),
     )
     bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dispatcher = Dispatcher()
+    dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(build_router(game))
     logging.info("Сюжет загружен: %d сцен", len(story.scenes))
     await dispatcher.start_polling(bot)
