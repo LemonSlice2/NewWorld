@@ -14,12 +14,36 @@ import random
 import sys
 
 from .core.content import ContentError, Story
-from .core.creation import roll_character
+from .core.content import Archetype
+from .core.creation import character_from_archetype, roll_character
 from .core.engine import Engine, InvalidAction, Turn
 from .narrator import TemplateNarrator
 from .views import render_options_plain, render_status, strip_html
 
 RULE = "─" * 60
+
+
+def choose_archetype(archetypes: tuple[Archetype, ...], preset: str | None) -> Archetype | None:
+    """Спросить, кем играть. None — в сюжете нет готовых героев."""
+    if not archetypes:
+        return None
+    if preset is not None:
+        for archetype in archetypes:
+            if archetype.id == preset:
+                return archetype
+        known = ", ".join(a.id for a in archetypes)
+        raise SystemExit(f"Нет персонажа {preset!r}. Доступны: {known}")
+    print(f"\n{RULE}\nКЕМ ИГРАЕШЬ?\n{RULE}")
+    for index, archetype in enumerate(archetypes, 1):
+        print(f"\n  {index}. {archetype.name} — {archetype.tagline}")
+    while True:
+        try:
+            raw = input("\nВыбор (номер): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit("\nДо встречи.") from None
+        if raw.isdigit() and 1 <= int(raw) <= len(archetypes):
+            return archetypes[int(raw) - 1]
+        print("Не понял. Введи номер.")
 
 
 def show(turn: Turn, narrator: TemplateNarrator) -> None:
@@ -35,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=None, help="сид для воспроизводимого забега")
     parser.add_argument("--name", default="Путник", help="имя персонажа")
     parser.add_argument("--hide-rolls", action="store_true", help="не показывать броски костей")
+    parser.add_argument("--hero", default=None, help="id персонажа (без него — спросит)")
     args = parser.parse_args(argv)
 
     try:
@@ -44,11 +69,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2**31)
-    character = roll_character(args.name, random.Random(seed))
     engine = Engine(story)
     narrator = TemplateNarrator(show_rolls=not args.hide_rolls)
 
-    turn = engine.start(character, seed=seed)
+    if story.world_intro:
+        title = story.world_title or "Мир"
+        print(f"\n{RULE}\n{title.upper()}\n{RULE}\n")
+        print(strip_html(story.world_intro))
+
+    archetype = choose_archetype(story.archetypes, args.hero)
+    if archetype is not None:
+        character = character_from_archetype(archetype)
+        flags = archetype.flags
+        print(f"\n{RULE}\nТы — {archetype.name.upper()}\n{RULE}\n")
+        print(strip_html(archetype.description))
+    else:
+        character = roll_character(args.name, random.Random(seed))
+        flags = ()
+
+    turn = engine.start(character, seed=seed, flags=flags)
     print(f"Сид забега: {seed}  (повторить: --seed {seed})")
     show(turn, narrator)
 

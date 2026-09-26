@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from .models import Ability
+from .models import DEFAULT_ABILITIES, Ability
 
 
 def normalize_prose(text: str) -> str:
@@ -229,12 +229,78 @@ class Scene:
         )
 
 
+@dataclass(frozen=True)
+class Archetype:
+    """Кем игрок выходит в мир.
+
+    Архетип задаёт не только цифры, но и взгляд: стартовые флаги открывают
+    в сценах те действия, до которых додумался бы именно такой человек.
+    Поэтому выбор персонажа — это ещё и выбор доступных ходов.
+    """
+
+    id: str
+    name: str
+    tagline: str
+    description: str
+    abilities: dict[Ability, int]
+    max_hp: int
+    gold: int = 0
+    items: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
+
+    @classmethod
+    def parse(cls, data: Any, where: str) -> Archetype:
+        if not isinstance(data, dict):
+            raise ContentError(f"{where}: персонаж должен быть словарём, получено {data!r}")
+        for key in ("id", "name", "tagline", "description", "abilities"):
+            if key not in data:
+                raise ContentError(f"{where}: персонажу нужен {key!r}")
+        unknown = set(data) - {
+            "id", "name", "tagline", "description", "abilities", "max_hp", "gold", "items", "flags"
+        }
+        if unknown:
+            raise ContentError(f"{where}: неизвестные ключи: {', '.join(sorted(unknown))}")
+        raw_abilities = data["abilities"]
+        if not isinstance(raw_abilities, dict):
+            raise ContentError(f"{where}: 'abilities' должен быть словарём характеристик")
+        abilities = dict(DEFAULT_ABILITIES)
+        for key, value in raw_abilities.items():
+            try:
+                ability = Ability(str(key).lower())
+            except ValueError:
+                allowed = ", ".join(a.value for a in Ability)
+                raise ContentError(
+                    f"{where}: неизвестная характеристика {key!r}. Доступны: {allowed}"
+                ) from None
+            abilities[ability] = int(value)
+        return cls(
+            id=str(data["id"]),
+            name=str(data["name"]),
+            tagline=normalize_prose(str(data["tagline"])),
+            description=normalize_prose(str(data["description"])),
+            abilities=abilities,
+            max_hp=int(data.get("max_hp", 10)),
+            gold=int(data.get("gold", 0)),
+            items=tuple(str(i) for i in data.get("items", []) or []),
+            flags=tuple(str(f) for f in data.get("flags", []) or []),
+        )
+
+
 @dataclass
 class Story:
     """Весь сюжет: сцены плюс точка входа."""
 
     start_scene: str
     scenes: dict[str, Scene] = field(default_factory=dict)
+    archetypes: tuple[Archetype, ...] = ()
+    world_title: str = ""
+    world_intro: str = ""
+
+    def archetype(self, archetype_id: str) -> Archetype:
+        for item in self.archetypes:
+            if item.id == archetype_id:
+                return item
+        raise ContentError(f"Персонаж {archetype_id!r} не найден")
 
     def scene(self, scene_id: str) -> Scene:
         try:
@@ -259,7 +325,25 @@ class Story:
             if scene.id in scenes:
                 raise ContentError(f"{path}: сцена {scene.id!r} объявлена дважды")
             scenes[scene.id] = scene
-        story = cls(start_scene=str(raw["start"]), scenes=scenes)
+        archetypes = tuple(
+            Archetype.parse(item, f"{path}: archetypes[{i}]")
+            for i, item in enumerate(raw.get("archetypes", []) or [])
+        )
+        seen_ids: set[str] = set()
+        for archetype in archetypes:
+            if archetype.id in seen_ids:
+                raise ContentError(f"{path}: персонаж {archetype.id!r} объявлен дважды")
+            seen_ids.add(archetype.id)
+        world = raw.get("world") or {}
+        if not isinstance(world, dict):
+            raise ContentError(f"{path}: 'world' должен быть словарём с 'title' и 'intro'")
+        story = cls(
+            start_scene=str(raw["start"]),
+            scenes=scenes,
+            archetypes=archetypes,
+            world_title=str(world.get("title", "")),
+            world_intro=normalize_prose(str(world.get("intro", ""))),
+        )
         story.validate()
         return story
 

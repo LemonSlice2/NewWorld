@@ -10,8 +10,8 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from ..core.content import Story
-from ..core.creation import roll_character
+from ..core.content import Archetype, Story
+from ..core.creation import character_from_archetype, roll_character
 from ..core.engine import Engine, InvalidAction, Turn
 from ..core.events import SceneEntered
 from ..narrator.base import Narrator
@@ -40,10 +40,25 @@ class GameService:
             store=store,
         )
 
-    async def start_new(self, user_id: int, name: str) -> Turn:
+    @property
+    def archetypes(self) -> tuple[Archetype, ...]:
+        return self.story.archetypes
+
+    async def start_new(
+        self,
+        user_id: int,
+        name: str,
+        archetype: Archetype | None = None,
+    ) -> Turn:
+        """Начать забег. Без архетипа персонаж бросается случайно."""
         seed = random.SystemRandom().randrange(2**31)
-        character = roll_character(name, random.Random(seed))
-        turn = self.engine.start(character, seed=seed)
+        if archetype is not None:
+            character = character_from_archetype(archetype)
+            flags = archetype.flags
+        else:
+            character = roll_character(name, random.Random(seed))
+            flags = ()
+        turn = self.engine.start(character, seed=seed, flags=flags)
         await self.store.save(user_id, self.story_id, turn.state)
         return turn
 

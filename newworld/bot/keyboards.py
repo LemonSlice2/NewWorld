@@ -12,6 +12,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from ..core.content import Option
 
 ACTION_PREFIX = "a"
+HERO_PREFIX = "h"
 MAX_LABEL = 60
 
 
@@ -46,3 +47,28 @@ def _clip(label: str) -> str:
     if len(label) <= MAX_LABEL:
         return label
     return label[: MAX_LABEL - 1].rstrip() + "…"
+
+
+def hero_keyboard(archetypes: tuple) -> InlineKeyboardMarkup:
+    """Экран выбора персонажа. В кнопке — только позиция в списке."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=_clip(archetype.name),
+                callback_data=f"{HERO_PREFIX}:{index}",
+            )
+        ]
+        for index, archetype in enumerate(archetypes)
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def parse_hero(data: str) -> int | None:
+    """Разобрать выбор персонажа. None — чужие или испорченные данные."""
+    parts = data.split(":")
+    if len(parts) != 2 or parts[0] != HERO_PREFIX:
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None

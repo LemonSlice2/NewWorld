@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .content import Branch, Effect, Option, Requirement, Scene, Story
@@ -57,11 +58,25 @@ class Engine:
 
     # --- запуск -------------------------------------------------------
 
-    def start(self, character: Character, seed: int | None = None) -> Turn:
-        """Начать забег. Без сида берётся случайный — он сохраняется в состоянии."""
+    def start(
+        self,
+        character: Character,
+        seed: int | None = None,
+        flags: Iterable[str] = (),
+    ) -> Turn:
+        """Начать забег. Без сида берётся случайный — он сохраняется в состоянии.
+
+        ``flags`` — стартовые метки персонажа: они открывают в сценах
+        действия, доступные именно такому герою.
+        """
         if seed is None:
             seed = random.SystemRandom().randrange(2**31)
-        state = GameState(character=character, scene_id=self.story.start_scene, seed=seed)
+        state = GameState(
+            character=character,
+            scene_id=self.story.start_scene,
+            seed=seed,
+            flags=set(flags),
+        )
         scene = self.story.scene(state.scene_id)
         first_visit = scene.id not in state.visited
         state.visited.add(scene.id)

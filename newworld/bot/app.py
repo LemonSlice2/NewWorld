@@ -16,7 +16,7 @@ from aiogram.types import CallbackQuery, Message
 
 from ..core.engine import InvalidAction, Turn
 from ..views import render_status
-from .keyboards import action_keyboard, parse_action
+from .keyboards import action_keyboard, hero_keyboard, parse_action, parse_hero
 from .service import GameService, StaleAction
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,23 @@ def build_router(game: GameService) -> Router:
                 reply_markup=action_keyboard(turn.state.turn, turn.options),
             )
 
+
+    async def offer_heroes(message: Message) -> None:
+        """Показать мир и предложить выбрать, кем играть."""
+        if game.story.world_intro:
+            title = game.story.world_title or "Мир"
+            await message.answer(f"<b>{title}</b>\n\n{game.story.world_intro}")
+        lines = ["<b>Кем играешь?</b>", ""]
+        for archetype in game.archetypes:
+            lines.append(f"<b>{archetype.name}</b> — {archetype.tagline}")
+        await message.answer("\n".join(lines), reply_markup=hero_keyboard(game.archetypes))
+
+    async def begin(message: Message, user_id: int, name: str, archetype=None) -> None:
+        turn = await game.start_new(user_id, name, archetype)
+        if archetype is not None:
+            await message.answer(f"<b>Ты — {archetype.name}</b>\n\n{archetype.description}")
+        await send_turn(message, turn)
+
     # --- команды ------------------------------------------------------
 
     @router.message(CommandStart())
@@ -83,17 +100,21 @@ def build_router(game: GameService) -> Router:
             await send_turn(message, existing)
             return
         await message.answer(HELP)
-        turn = await game.start_new(user.id, user.first_name or "Путник")
-        await send_turn(message, turn)
+        if game.archetypes:
+            await offer_heroes(message)
+            return
+        await begin(message, user.id, user.first_name or "Путник")
 
     @router.message(Command("new"))
     async def on_new(message: Message) -> None:
         user = message.from_user
         if user is None:
             return
-        turn = await game.start_new(user.id, user.first_name or "Путник")
+        if game.archetypes:
+            await offer_heroes(message)
+            return
         await message.answer("Новый забег.")
-        await send_turn(message, turn)
+        await begin(message, user.id, user.first_name or "Путник")
 
     @router.message(Command("status"))
     async def on_status(message: Message) -> None:
@@ -111,6 +132,23 @@ def build_router(game: GameService) -> Router:
         await message.answer(HELP)
 
     # --- действия -----------------------------------------------------
+
+
+    @router.callback_query(F.data.startswith("h:"))
+    async def on_hero(callback: CallbackQuery) -> None:
+        user = callback.from_user
+        index = parse_hero(callback.data or "")
+        if index is None or callback.message is None or not 0 <= index < len(game.archetypes):
+            await callback.answer("Не понял выбор")
+            return
+        archetype = game.archetypes[index]
+        await callback.answer()
+        # Убираем кнопки выбора: персонаж уже выбран, повторный клик не нужен.
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        await begin(callback.message, user.id, user.first_name or "Путник", archetype)
 
     @router.callback_query(F.data.startswith("a:"))
     async def on_action(callback: CallbackQuery) -> None:
