@@ -8,12 +8,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .models import Ability
+
+
+def normalize_prose(text: str) -> str:
+    """Склеить строки абзаца в одну, сохранив разбиение на абзацы.
+
+    В сюжетном файле текст удобно набирать в несколько коротких строк, но
+    экран телефона узкий и переносит текст сам. Если оставить авторские
+    переносы, они наложатся на экранные и абзац порвётся в случайных
+    местах. Поэтому одиночный перенос — это пробел, а пустая строка —
+    граница абзаца.
+    """
+    paragraphs = re.split(r"\n\s*\n", text.strip())
+    return "\n\n".join(" ".join(p.split()) for p in paragraphs if p.strip())
 
 
 class ContentError(ValueError):
@@ -99,7 +113,11 @@ class Branch:
         effects = tuple(
             Effect.parse(e, f"{where}.effects[{i}]") for i, e in enumerate(data.get("effects", []) or [])
         )
-        return cls(text=str(data.get("text", "")), effects=effects, goto=data.get("goto"))
+        return cls(
+            text=normalize_prose(str(data.get("text", ""))),
+            effects=effects,
+            goto=data.get("goto"),
+        )
 
 
 @dataclass(frozen=True)
@@ -205,7 +223,7 @@ class Scene:
         return cls(
             id=str(data["id"]),
             title=str(data["title"]),
-            text=str(data["text"]).strip(),
+            text=normalize_prose(str(data["text"])),
             options=options,
             ending=ending,
         )

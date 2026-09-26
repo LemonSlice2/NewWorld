@@ -122,3 +122,34 @@ def test_demo_story_is_valid():
     story = Story.load("content/olhovets.yaml")
     assert len(story.scenes) >= 5
     assert any(scene.ending for scene in story.scenes.values())
+
+
+def test_prose_paragraphs_survive_but_line_breaks_do_not(tmp_path):
+    """Экран телефона переносит текст сам — авторские переносы внутри
+    абзаца должны исчезнуть, а пустая строка между абзацами остаться."""
+    path = write_story(
+        tmp_path,
+        """
+        start: a
+        scenes:
+          - id: a
+            title: А
+            text: |
+              Первая строка абзаца,
+              вторая строка того же абзаца.
+
+              Второй абзац.
+            options:
+              - id: go
+                label: Раз
+                text: |
+                  Тоже
+                  склеится.
+                goto: a
+        """,
+    )
+    story = Story.load(path)
+    assert story.scene("a").text == (
+        "Первая строка абзаца, вторая строка того же абзаца.\n\nВторой абзац."
+    )
+    assert story.scene("a").options[0].plain.text == "Тоже склеится."
