@@ -88,8 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         flags = ()
 
     turn = engine.start(character, seed=seed, flags=flags)
-    print(f"Сид забега: {seed}  (повторить: --seed {seed})")
     show(turn, narrator)
+    print(f"(сид забега {seed} — повторить этот же расклад: --seed {seed})")
 
     while not turn.is_over:
         print(render_options_plain(turn.options))
