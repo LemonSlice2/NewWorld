@@ -27,13 +27,18 @@ def health_bar(character: Character, width: int = 10) -> str:
     return "▰" * filled + "▱" * (width - filled)
 
 
-def render_status(character: Character) -> str:
-    """Карточка персонажа: то, что игрок должен видеть постоянно."""
+def render_status(character: Character, with_bar: bool = True) -> str:
+    """Карточка персонажа: то, что игрок должен видеть постоянно.
+
+    ``with_bar`` выключается, когда полосу здоровья рисует картинка:
+    два индикатора подряд только спорят друг с другом.
+    """
     lines = [f"<b>{html.escape(character.name)}</b>"]
     if character.origin:
         lines.append(f"<i>{html.escape(character.origin)}</i>")
+    bar = f"  {health_bar(character)}" if with_bar else ""
     lines += [
-        f"❤️ {character.hp}/{character.max_hp}  {health_bar(character)}",
+        f"❤️ {character.hp}/{character.max_hp}{bar}",
         f"🪙 {character.gold}",
     ]
     abilities = "  ".join(

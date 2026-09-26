@@ -20,7 +20,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from ..core.engine import InvalidAction, Turn
 from ..core.gendered import inflect
@@ -38,6 +38,7 @@ from .keyboards import (
     skip_name_keyboard,
     subclass_keyboard,
 )
+from .health_bar import HealthBarImages
 from .service import GameService, SaveOutdated, StaleAction
 
 logger = logging.getLogger(__name__)
@@ -75,8 +76,9 @@ def clean_name(raw: str) -> str:
     return name[:MAX_NAME].strip()
 
 
-def build_router(game: GameService) -> Router:
+def build_router(game: GameService, health_bar: HealthBarImages | None = None) -> Router:
     router = Router()
+    health_bar = health_bar or HealthBarImages()
 
     # --- отрисовка ----------------------------------------------------
 
@@ -109,6 +111,37 @@ def build_router(game: GameService) -> Router:
                 render(turn),
                 reply_markup=action_keyboard(turn.state.turn, turn.options),
             )
+
+
+    async def send_status(message: Message, turn: Turn) -> None:
+        """Карточка персонажа. С нарисованной полосой здоровья, если она есть.
+
+        Подпись к фото Telegram ограничивает 1024 символами — карточка в
+        него укладывается, в отличие от текста сцены. Поэтому картинка
+        живёт здесь, а не под каждым ходом.
+        """
+        character = turn.state.character
+        caption = render_status(character, with_bar=not health_bar.available)
+
+        cached = health_bar.cached_id(character)
+        if cached is not None:
+            await message.answer_photo(cached, caption=caption)
+            return
+
+        path = health_bar.path_for(character)
+        if path is None:
+            await message.answer(caption)
+            return
+        photo = BufferedInputFile(path.read_bytes(), filename=path.name)
+        try:
+            sent = await message.answer_photo(photo, caption=caption)
+        except TelegramBadRequest as exc:
+            # Картинка испорчена или не подходит Telegram — карточка важнее.
+            logger.warning("Не удалось отправить полосу здоровья (%s): %s", path.name, exc)
+            await message.answer(caption)
+            return
+        if sent.photo:
+            health_bar.remember(character, sent.photo[-1].file_id)
 
     # --- создание персонажа -------------------------------------------
 
@@ -234,7 +267,7 @@ def build_router(game: GameService) -> Router:
         if turn is None:
             await message.answer("Забег ещё не начат. /new — создать героя.")
             return
-        await message.answer(render_status(turn.state.character))
+        await send_status(message, turn)
 
     @router.message(Command("help"))
     async def on_help(message: Message) -> None:

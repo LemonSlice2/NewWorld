@@ -25,9 +25,10 @@ from ..core.content import ContentError, Story
 from ..narrator import TemplateNarrator
 from ..storage import SaveStore
 from .app import build_router
+from .health_bar import DEFAULT_DIR, HealthBarImages
 from .service import GameService
 
-async def run(story_path: str, db_path: str, token: str) -> None:
+async def run(story_path: str, db_path: str, token: str, assets: str) -> None:
     story = Story.load(story_path)
     game = GameService.create(
         story_id=Path(story_path).stem,
@@ -37,8 +38,13 @@ async def run(story_path: str, db_path: str, token: str) -> None:
     )
     bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(storage=MemoryStorage())
-    dispatcher.include_router(build_router(game))
+    health_bar = HealthBarImages(assets)
+    dispatcher.include_router(build_router(game, health_bar))
     logging.info("Сюжет загружен: %d сцен", len(story.scenes))
+    if health_bar.available:
+        logging.info("Полоса здоровья: %d делений из %s", health_bar.steps, assets)
+    else:
+        logging.info("Картинок здоровья нет (%s) — показываю текстовую полосу", assets)
     await dispatcher.start_polling(bot)
 
 
@@ -46,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Telegram-бот текстовой игры")
     parser.add_argument("story", help="путь к YAML-файлу сюжета")
     parser.add_argument("--db", default="saves.db", help="файл сохранений")
+    parser.add_argument(
+        "--assets", default=str(DEFAULT_DIR), help="папка с картинками полосы здоровья"
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -65,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        asyncio.run(run(args.story, args.db, token))
+        asyncio.run(run(args.story, args.db, token, args.assets))
     except ContentError as exc:
         print(f"Ошибка в сюжете: {exc}", file=sys.stderr)
         return 1
