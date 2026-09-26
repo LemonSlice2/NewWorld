@@ -14,8 +14,9 @@ import random
 import sys
 
 from .core.content import ContentError, Story
-from .core.content import CharacterClass, Subclass
 from .core.creation import build_character, roll_character, starting_flags
+from .core.gendered import inflect
+from .core.models import Gender
 from .core.engine import Engine, InvalidAction, Turn
 from .narrator import TemplateNarrator
 from .views import render_options_plain, render_status, strip_html
@@ -39,9 +40,11 @@ def pick(title: str, items: list, describe) -> object:
 
 
 def create_character(story, preset_class: str | None, preset_name: str | None):
-    """Провести игрока по созданию персонажа: класс, специализация, имя."""
+    """Провести игрока по созданию героя: пол, класс, специализация, имя."""
     if not story.classes:
-        return None, None, preset_name or "Путник"
+        return Gender.MALE, None, None, preset_name or "Путник"
+
+    gender = pick("КТО ПОЙДЁТ В ОЛЬХОВЕЦ?", list(Gender), lambda g: g.label)
 
     if preset_class is not None:
         character_class = next((c for c in story.classes if c.id == preset_class), None)
@@ -50,28 +53,30 @@ def create_character(story, preset_class: str | None, preset_name: str | None):
             raise SystemExit(f"Нет класса {preset_class!r}. Доступны: {known}")
     else:
         character_class = pick(
-            "КЕМ ТЫ БЫЛ ДО ЭТОЙ ДОРОГИ?",
+            inflect("КЕМ ТЫ БЫЛ{|А} ДО ЭТОЙ ДОРОГИ?", gender),
             list(story.classes),
-            lambda c: f"{c.name} — {c.tagline}",
+            lambda c: f"{c.name.for_gender(gender)} — {c.tagline}",
         )
-        print(f"\n{strip_html(character_class.description)}")
+        print(f"\n{strip_html(inflect(character_class.description, gender))}")
 
     subclass = None
-    if character_class.subclasses:
+    subclasses = story.subclasses_of(character_class)
+    if subclasses:
         subclass = pick(
-            "ЧЕМ ТЫ ЗАНИМАЛСЯ В ЭТОМ РЕМЕСЛЕ?",
-            list(character_class.subclasses),
-            lambda s: f"{s.name} — {s.tagline}",
+            inflect("ЧЕМ ТЫ ЗАНИМАЛ{СЯ|АСЬ} В ЭТОМ РЕМЕСЛЕ?", gender),
+            list(subclasses),
+            lambda s: f"{s.name.for_gender(gender)} — {s.tagline}",
         )
-        print(f"\n{strip_html(subclass.description)}")
+        print(f"\n{strip_html(inflect(subclass.description, gender))}")
 
     name = preset_name
     if name is None:
         try:
-            name = input("\nКак его зовут? (пусто — по ремеслу): ").strip()
+            prompt = inflect("\nКак {его|её} зовут? (пусто — по ремеслу): ", gender)
+            name = input(prompt).strip()
         except (EOFError, KeyboardInterrupt):
             raise SystemExit("\nДо встречи.") from None
-    return character_class, subclass, name
+    return gender, character_class, subclass, name
 
 
 def show(turn: Turn, narrator: TemplateNarrator) -> None:
@@ -105,13 +110,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{RULE}\n{title.upper()}\n{RULE}\n")
         print(strip_html(story.world_intro))
 
-    character_class, subclass, name = create_character(story, args.hero, args.name)
+    gender, character_class, subclass, name = create_character(story, args.hero, args.name)
     if character_class is not None:
-        character = build_character(name or "", character_class, subclass)
+        character = build_character(name or "", gender, character_class, subclass)
         flags = starting_flags(character_class, subclass)
         print(f"\n{RULE}\n{character.name.upper()} — {character.origin}\n{RULE}")
     else:
-        character = roll_character(name or "Путник", random.Random(seed))
+        character = roll_character(name or "Путник", random.Random(seed), gender)
         flags = ()
 
     turn = engine.start(character, seed=seed, flags=flags)

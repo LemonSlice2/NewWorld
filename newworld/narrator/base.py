@@ -13,6 +13,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from ..core.engine import Turn
+from ..core.gendered import inflect
 
 
 class Narrator(ABC):
@@ -24,4 +25,4 @@ class Narrator(ABC):
 
     def describe_scene(self, turn: Turn) -> str:
         """Описать текущую сцену без событий — например, при возврате в игру."""
-        return turn.scene.text
+        return inflect(turn.scene.text, turn.state.character.gender)

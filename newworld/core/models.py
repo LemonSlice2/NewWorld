@@ -12,6 +12,21 @@ from enum import Enum
 from typing import Any
 
 
+class Gender(str, Enum):
+    """Пол героя.
+
+    Нужен не для механики, а для языка: русский требует согласования, и
+    «ты вышел» вместо «ты вышла» сразу выбивает игрока из роли.
+    """
+
+    MALE = "m"
+    FEMALE = "f"
+
+    @property
+    def label(self) -> str:
+        return "Мужчина" if self is Gender.MALE else "Женщина"
+
+
 class Ability(str, Enum):
     STR = "str"
     DEX = "dex"
@@ -48,6 +63,7 @@ class Character:
     # Кем персонаж вышел в мир, например «Знахарь · Травница».
     # Имя даёт игрок, происхождение — выбор класса и специализации.
     origin: str = ""
+    gender: Gender = Gender.MALE
     abilities: dict[Ability, int] = field(default_factory=lambda: dict(DEFAULT_ABILITIES))
     hp: int = 10
     max_hp: int = 10
@@ -79,6 +95,7 @@ class Character:
         return {
             "name": self.name,
             "origin": self.origin,
+            "gender": self.gender.value,
             "abilities": {a.value: v for a, v in self.abilities.items()},
             "hp": self.hp,
             "max_hp": self.max_hp,
@@ -93,6 +110,7 @@ class Character:
         return cls(
             name=data["name"],
             origin=data.get("origin", ""),
+            gender=Gender(data.get("gender", Gender.MALE.value)),
             abilities=abilities,
             hp=data.get("hp", 10),
             max_hp=data.get("max_hp", 10),

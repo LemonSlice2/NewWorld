@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from .models import DEFAULT_ABILITIES, Ability
+from .models import DEFAULT_ABILITIES, Ability, Gender
 
 
 def normalize_prose(text: str) -> str:
@@ -229,6 +229,35 @@ class Scene:
         )
 
 
+@dataclass(frozen=True)
+class Named:
+    """Название в двух родах.
+
+    В YAML пишется либо одной строкой (когда род не меняет слова), либо
+    словарём ``{m: Травник, f: Травница}``.
+    """
+
+    male: str
+    female: str
+
+    def for_gender(self, gender: Gender) -> str:
+        return self.male if gender is Gender.MALE else self.female
+
+    @classmethod
+    def parse(cls, data: Any, where: str) -> Named:
+        if isinstance(data, str):
+            return cls(male=data, female=data)
+        if isinstance(data, dict):
+            missing = {"m", "f"} - set(data)
+            if missing:
+                raise ContentError(
+                    f"{where}: в названии не хватает {', '.join(sorted(missing))} "
+                    "(нужны обе формы: {m: Травник, f: Травница})"
+                )
+            return cls(male=str(data["m"]), female=str(data["f"]))
+        raise ContentError(f"{where}: название должно быть строкой или словарём, получено {data!r}")
+
+
 def parse_abilities(
     data: Any, where: str, base: dict[Ability, int] | None
 ) -> dict[Ability, int]:
@@ -254,39 +283,103 @@ def parse_abilities(
 
 @dataclass(frozen=True)
 class Subclass:
-    """Специализация внутри класса.
+    """Специализация. Её могут брать разные классы.
 
-    Подкласс не задаёт персонажа заново, а уточняет его: прибавка к
-    характеристикам, своя вещь и свой флаг. Флаг открывает в сценах
-    действия, на которые способен именно такой человек.
+    Одна и та же выучка в руках разных людей — разное дело: следопыт из
+    фронтовика читает след человека, следопыт из знахаря — след зверя и
+    того, что зверем не является. Поэтому у специализации есть базовое
+    описание и уточнения ``for_class``: они дополняют базу для
+    конкретного класса и дают сочетанию собственный флаг.
     """
 
     id: str
-    name: str
+    name: Named
     tagline: str
     description: str
     ability_bonus: dict[Ability, int] = field(default_factory=dict)
     hp_bonus: int = 0
     items: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
+    # class_id -> чем эта специализация становится именно у него
+    for_class: dict[str, "SubclassTwist"] = field(default_factory=dict)
+
+    def resolved_for(self, class_id: str) -> Subclass:
+        """Специализация в том виде, в каком её берёт этот класс."""
+        twist = self.for_class.get(class_id)
+        if twist is None:
+            return self
+        abilities = dict(self.ability_bonus)
+        for ability, bonus in twist.ability_bonus.items():
+            abilities[ability] = abilities.get(ability, 0) + bonus
+        return Subclass(
+            id=self.id,
+            name=twist.name or self.name,
+            tagline=twist.tagline or self.tagline,
+            description=twist.description or self.description,
+            ability_bonus=abilities,
+            hp_bonus=self.hp_bonus + twist.hp_bonus,
+            items=self.items + twist.items,
+            flags=self.flags + twist.flags,
+        )
 
     @classmethod
     def parse(cls, data: Any, where: str) -> Subclass:
         if not isinstance(data, dict):
-            raise ContentError(f"{where}: подкласс должен быть словарём, получено {data!r}")
+            raise ContentError(f"{where}: специализация должна быть словарём, получено {data!r}")
         for key in ("id", "name", "tagline", "description"):
             if key not in data:
-                raise ContentError(f"{where}: подклассу нужен {key!r}")
+                raise ContentError(f"{where}: специализации нужен {key!r}")
         unknown = set(data) - {
-            "id", "name", "tagline", "description", "ability_bonus", "hp_bonus", "items", "flags"
+            "id", "name", "tagline", "description",
+            "ability_bonus", "hp_bonus", "items", "flags", "for_class",
+        }
+        if unknown:
+            raise ContentError(f"{where}: неизвестные ключи: {', '.join(sorted(unknown))}")
+        raw_twists = data.get("for_class") or {}
+        if not isinstance(raw_twists, dict):
+            raise ContentError(f"{where}: 'for_class' должен быть словарём «класс: уточнения»")
+        twists = {
+            str(class_id): SubclassTwist.parse(value, f"{where}, уточнение для {class_id!r}")
+            for class_id, value in raw_twists.items()
+        }
+        return cls(
+            id=str(data["id"]),
+            name=Named.parse(data["name"], where),
+            tagline=normalize_prose(str(data["tagline"])),
+            description=normalize_prose(str(data["description"])),
+            ability_bonus=parse_abilities(data.get("ability_bonus") or {}, where, base=None),
+            hp_bonus=int(data.get("hp_bonus", 0)),
+            items=tuple(str(i) for i in data.get("items", []) or []),
+            flags=tuple(str(f) for f in data.get("flags", []) or []),
+            for_class=twists,
+        )
+
+
+@dataclass(frozen=True)
+class SubclassTwist:
+    """Чем специализация становится в руках конкретного класса."""
+
+    name: Named | None = None
+    tagline: str = ""
+    description: str = ""
+    ability_bonus: dict[Ability, int] = field(default_factory=dict)
+    hp_bonus: int = 0
+    items: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
+
+    @classmethod
+    def parse(cls, data: Any, where: str) -> SubclassTwist:
+        if not isinstance(data, dict):
+            raise ContentError(f"{where}: уточнение должно быть словарём, получено {data!r}")
+        unknown = set(data) - {
+            "name", "tagline", "description", "ability_bonus", "hp_bonus", "items", "flags"
         }
         if unknown:
             raise ContentError(f"{where}: неизвестные ключи: {', '.join(sorted(unknown))}")
         return cls(
-            id=str(data["id"]),
-            name=str(data["name"]),
-            tagline=normalize_prose(str(data["tagline"])),
-            description=normalize_prose(str(data["description"])),
+            name=Named.parse(data["name"], where) if "name" in data else None,
+            tagline=normalize_prose(str(data.get("tagline", ""))),
+            description=normalize_prose(str(data.get("description", ""))),
             ability_bonus=parse_abilities(data.get("ability_bonus") or {}, where, base=None),
             hp_bonus=int(data.get("hp_bonus", 0)),
             items=tuple(str(i) for i in data.get("items", []) or []),
@@ -296,10 +389,10 @@ class Subclass:
 
 @dataclass(frozen=True)
 class CharacterClass:
-    """Кем игрок выходит в мир: ремесло, судьба и взгляд на происходящее."""
+    """Кем игрок был до этой дороги: ремесло, судьба и взгляд на мир."""
 
     id: str
-    name: str
+    name: Named
     tagline: str
     description: str
     abilities: dict[Ability, int]
@@ -307,13 +400,9 @@ class CharacterClass:
     gold: int = 0
     items: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
-    subclasses: tuple[Subclass, ...] = ()
-
-    def subclass(self, subclass_id: str) -> Subclass:
-        for item in self.subclasses:
-            if item.id == subclass_id:
-                return item
-        raise ContentError(f"Специализация {subclass_id!r} не найдена у класса {self.id!r}")
+    # Ссылки на общий список специализаций: одну и ту же может брать
+    # несколько классов, и у каждого она своя.
+    subclass_ids: tuple[str, ...] = ()
 
     @classmethod
     def parse(cls, data: Any, where: str) -> CharacterClass:
@@ -328,18 +417,12 @@ class CharacterClass:
         }
         if unknown:
             raise ContentError(f"{where}: неизвестные ключи: {', '.join(sorted(unknown))}")
-        subclasses = tuple(
-            Subclass.parse(item, f"{where}, подкласс [{i}]")
-            for i, item in enumerate(data.get("subclasses", []) or [])
-        )
-        seen: set[str] = set()
-        for subclass in subclasses:
-            if subclass.id in seen:
-                raise ContentError(f"{where}: подкласс {subclass.id!r} объявлен дважды")
-            seen.add(subclass.id)
+        subclass_ids = tuple(str(i) for i in data.get("subclasses", []) or [])
+        if len(set(subclass_ids)) != len(subclass_ids):
+            raise ContentError(f"{where}: одна и та же специализация указана дважды")
         return cls(
             id=str(data["id"]),
-            name=str(data["name"]),
+            name=Named.parse(data["name"], where),
             tagline=normalize_prose(str(data["tagline"])),
             description=normalize_prose(str(data["description"])),
             abilities=parse_abilities(data["abilities"], where, base=DEFAULT_ABILITIES),
@@ -347,7 +430,7 @@ class CharacterClass:
             gold=int(data.get("gold", 0)),
             items=tuple(str(i) for i in data.get("items", []) or []),
             flags=tuple(str(f) for f in data.get("flags", []) or []),
-            subclasses=subclasses,
+            subclass_ids=subclass_ids,
         )
 
 
@@ -358,6 +441,7 @@ class Story:
     start_scene: str
     scenes: dict[str, Scene] = field(default_factory=dict)
     classes: tuple[CharacterClass, ...] = ()
+    subclasses: dict[str, Subclass] = field(default_factory=dict)
     world_title: str = ""
     world_intro: str = ""
 
@@ -366,6 +450,20 @@ class Story:
             if item.id == class_id:
                 return item
         raise ContentError(f"Класс {class_id!r} не найден")
+
+    def subclasses_of(self, character_class: CharacterClass) -> tuple[Subclass, ...]:
+        """Специализации класса — уже с учётом того, чем они у него становятся."""
+        return tuple(
+            self.subclasses[subclass_id].resolved_for(character_class.id)
+            for subclass_id in character_class.subclass_ids
+        )
+
+    def subclass_of(self, character_class: CharacterClass, subclass_id: str) -> Subclass:
+        if subclass_id not in character_class.subclass_ids:
+            raise ContentError(
+                f"Класс {character_class.id!r} не может взять специализацию {subclass_id!r}"
+            )
+        return self.subclasses[subclass_id].resolved_for(character_class.id)
 
     def scene(self, scene_id: str) -> Scene:
         try:
@@ -390,6 +488,12 @@ class Story:
             if scene.id in scenes:
                 raise ContentError(f"{path}: сцена {scene.id!r} объявлена дважды")
             scenes[scene.id] = scene
+        subclasses: dict[str, Subclass] = {}
+        for i, item in enumerate(raw.get("subclasses", []) or []):
+            subclass = Subclass.parse(item, f"{path}: subclasses[{i}]")
+            if subclass.id in subclasses:
+                raise ContentError(f"{path}: специализация {subclass.id!r} объявлена дважды")
+            subclasses[subclass.id] = subclass
         classes = tuple(
             CharacterClass.parse(item, f"{path}: classes[{i}]")
             for i, item in enumerate(raw.get("classes", []) or [])
@@ -406,6 +510,7 @@ class Story:
             start_scene=str(raw["start"]),
             scenes=scenes,
             classes=classes,
+            subclasses=subclasses,
             world_title=str(world.get("title", "")),
             world_intro=normalize_prose(str(world.get("intro", ""))),
         )
@@ -416,6 +521,21 @@ class Story:
         """Проверить, что все переходы ведут в существующие сцены."""
         if self.start_scene not in self.scenes:
             raise ContentError(f"Стартовая сцена {self.start_scene!r} не найдена")
+        for character_class in self.classes:
+            for subclass_id in character_class.subclass_ids:
+                if subclass_id not in self.subclasses:
+                    known = ", ".join(sorted(self.subclasses)) or "ни одной не объявлено"
+                    raise ContentError(
+                        f"класс {character_class.id!r}: специализация {subclass_id!r} "
+                        f"не объявлена. Доступны: {known}"
+                    )
+        for subclass in self.subclasses.values():
+            for class_id in subclass.for_class:
+                if all(c.id != class_id for c in self.classes):
+                    raise ContentError(
+                        f"специализация {subclass.id!r}: уточнение для неизвестного "
+                        f"класса {class_id!r}"
+                    )
         for scene in self.scenes.values():
             for option in scene.options:
                 branches = (

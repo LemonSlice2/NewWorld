@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from ..core.content import CharacterClass, Option
+from ..core.content import CharacterClass, Option, Subclass
+from ..core.models import Gender
 
 ACTION_PREFIX = "a"
+GENDER_PREFIX = "g"
 CLASS_PREFIX = "c"
 SUBCLASS_PREFIX = "s"
 SKIP_NAME = "noname"
@@ -34,11 +36,13 @@ def action_keyboard(turn_number: int, options: tuple[Option, ...]) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def class_keyboard(classes: tuple[CharacterClass, ...]) -> InlineKeyboardMarkup:
+def class_keyboard(
+    classes: tuple[CharacterClass, ...], gender: Gender
+) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=_clip(character_class.name),
+                text=_clip(character_class.name.for_gender(gender)),
                 callback_data=f"{CLASS_PREFIX}:{index}",
             )
         ]
@@ -47,15 +51,30 @@ def class_keyboard(classes: tuple[CharacterClass, ...]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def subclass_keyboard(class_index: int, character_class: CharacterClass) -> InlineKeyboardMarkup:
+def gender_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=gender.label, callback_data=f"{GENDER_PREFIX}:{gender.value}"
+                )
+                for gender in Gender
+            ]
+        ]
+    )
+
+
+def subclass_keyboard(
+    class_index: int, subclasses: tuple[Subclass, ...], gender: Gender
+) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=_clip(subclass.name),
+                text=_clip(subclass.name.for_gender(gender)),
                 callback_data=f"{SUBCLASS_PREFIX}:{class_index}:{index}",
             )
         ]
-        for index, subclass in enumerate(character_class.subclasses)
+        for index, subclass in enumerate(subclasses)
     ]
     rows.append(
         [InlineKeyboardButton(text="← Другой класс", callback_data=f"{CLASS_PREFIX}:back")]
@@ -107,3 +126,14 @@ def _clip(label: str) -> str:
     if len(label) <= MAX_LABEL:
         return label
     return label[: MAX_LABEL - 1].rstrip() + "…"
+
+
+def parse_gender(data: str) -> Gender | None:
+    """Разобрать выбор пола. None — не выбор пола."""
+    parts = data.split(":")
+    if len(parts) != 2 or parts[0] != GENDER_PREFIX:
+        return None
+    try:
+        return Gender(parts[1])
+    except ValueError:
+        return None

@@ -6,6 +6,7 @@ from newworld.bot.keyboards import action_keyboard, parse_action
 from newworld.bot.service import GameService, StaleAction
 from newworld.core.content import Story
 from newworld.narrator import TemplateNarrator
+from newworld.core.models import Gender
 from newworld.storage import SaveStore
 
 
@@ -173,8 +174,10 @@ async def test_build_choice_defines_available_actions(game):
     seen = {}
     user_id = 30
     for character_class in game.classes:
-        for subclass in character_class.subclasses:
-            turn = await game.start_new(user_id, "Коля", character_class, subclass)
+        for subclass in game.subclasses_of(character_class):
+            turn = await game.start_new(
+                user_id, "Коля", Gender.MALE, character_class, subclass
+            )
             seen[f"{character_class.id}/{subclass.id}"] = frozenset(o.id for o in turn.options)
             user_id += 1
     assert len(set(seen.values())) > 1, f"все сборки играют одинаково: {seen}"
@@ -183,10 +186,12 @@ async def test_build_choice_defines_available_actions(game):
 @pytest.mark.asyncio
 async def test_player_name_is_kept_apart_from_the_craft(game):
     character_class = game.classes[0]
-    turn = await game.start_new(40, "неважно", character_class, character_class.subclasses[0])
+    subclass = game.subclasses_of(character_class)[0]
+    turn = await game.start_new(40, "неважно", Gender.FEMALE, character_class, subclass)
     character = turn.state.character
     assert character.name == "неважно"
-    assert character.origin.startswith(character_class.name)
+    assert character.gender is Gender.FEMALE
+    assert character.origin.startswith(character_class.name.for_gender(Gender.FEMALE))
 
     resumed = await game.resume(40)
     assert resumed.state.character.origin == character.origin

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from ..core.engine import Turn
+from ..core.gendered import inflect
 from ..core.events import (
     CheckRolled,
     DamageTaken,
@@ -36,6 +37,7 @@ class TemplateNarrator(Narrator):
 
     def narrate(self, turn: Turn) -> str:
         parts: list[str] = []
+        gender = turn.state.character.gender
 
         for event in turn.events:
             if isinstance(event, CheckRolled) and self.show_rolls:
@@ -57,7 +59,7 @@ class TemplateNarrator(Narrator):
             scene = turn.scene
             parts.append(f"<b>{scene.title}</b>\n{scene.text}")
 
-        return "\n\n".join(p for p in parts if p).strip()
+        return inflect("\n\n".join(p for p in parts if p).strip(), gender)
 
     # --- отдельные события --------------------------------------------
 

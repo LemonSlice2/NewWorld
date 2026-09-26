@@ -23,13 +23,17 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from ..core.engine import InvalidAction, Turn
+from ..core.gendered import inflect
 from ..views import render_status
+from ..core.models import Gender
 from .keyboards import (
     SKIP_NAME,
     action_keyboard,
     class_keyboard,
+    gender_keyboard,
     parse_action,
     parse_class,
+    parse_gender,
     parse_subclass,
     skip_name_keyboard,
     subclass_keyboard,
@@ -54,8 +58,14 @@ HELP = (
 
 
 class Creation(StatesGroup):
-    """Шаг, на котором бот ждёт от игрока имя героя."""
+    """Создание героя.
 
+    Выбор пола, класса и специализации делается кнопками, а имя приходит
+    обычным сообщением — ради него и нужно состояние. Заодно оно держит
+    уже сделанные выборы: они живут секунды и не заслуживают записи в базу.
+    """
+
+    building = State()
     waiting_for_name = State()
 
 
@@ -102,45 +112,69 @@ def build_router(game: GameService) -> Router:
 
     # --- создание персонажа -------------------------------------------
 
-    async def offer_classes(message: Message, with_world: bool = True) -> None:
+    async def offer_gender(message: Message, with_world: bool = True) -> None:
         if with_world and game.story.world_intro:
             title = game.story.world_title or "Мир"
             await message.answer(f"<b>{title}</b>\n\n{game.story.world_intro}")
-        lines = ["<b>Кем ты был до этой дороги?</b>", ""]
-        for character_class in game.classes:
-            lines.append(f"<b>{character_class.name}</b> — {character_class.tagline}")
-        await message.answer("\n".join(lines), reply_markup=class_keyboard(game.classes))
+        await message.answer(
+            "<b>Кто пойдёт в Ольховец?</b>", reply_markup=gender_keyboard()
+        )
 
-    async def offer_subclasses(message: Message, class_index: int) -> None:
+    async def offer_classes(message: Message, gender: Gender) -> None:
+        lines = ["<b>Кем ты был{|а} до этой дороги?</b>", ""]
+        for character_class in game.classes:
+            lines.append(
+                f"<b>{character_class.name.for_gender(gender)}</b> — {character_class.tagline}"
+            )
+        await message.answer(
+            inflect("\n".join(lines), gender),
+            reply_markup=class_keyboard(game.classes, gender),
+        )
+
+    async def offer_subclasses(message: Message, class_index: int, gender: Gender) -> None:
         character_class = game.classes[class_index]
+        subclasses = game.subclasses_of(character_class)
         lines = [
-            f"<b>{character_class.name}</b>",
+            f"<b>{character_class.name.for_gender(gender)}</b>",
             "",
             character_class.description,
             "",
-            "<b>Чем ты занимался в этом ремесле?</b>",
+            "<b>Чем ты занимал{ся|ась} в этом ремесле?</b>",
             "",
         ]
-        for subclass in character_class.subclasses:
-            lines.append(f"<b>{subclass.name}</b> — {subclass.tagline}")
+        for subclass in subclasses:
+            lines.append(f"<b>{subclass.name.for_gender(gender)}</b> — {subclass.tagline}")
         await message.answer(
-            "\n".join(lines), reply_markup=subclass_keyboard(class_index, character_class)
+            inflect("\n".join(lines), gender),
+            reply_markup=subclass_keyboard(class_index, subclasses, gender),
         )
 
-    async def ask_name(message: Message, class_index: int, subclass_index: int) -> None:
-        subclass = game.classes[class_index].subclasses[subclass_index]
+    async def ask_name(
+        message: Message, class_index: int, subclass_index: int, gender: Gender
+    ) -> None:
+        character_class = game.classes[class_index]
+        subclass = game.subclasses_of(character_class)[subclass_index]
         await message.answer(
-            f"<b>{subclass.name}</b>\n\n{subclass.description}\n\n"
-            "<b>Как его зовут?</b>\nНапиши имя одним сообщением.",
+            inflect(
+                f"<b>{subclass.name.for_gender(gender)}</b>\n\n{subclass.description}\n\n"
+                "<b>Как {его|её} зовут?</b>\nНапиши имя одним сообщением.",
+                gender,
+            ),
             reply_markup=skip_name_keyboard(),
         )
 
     async def create_and_start(
-        message: Message, user_id: int, name: str, class_index: int, subclass_index: int
+        message: Message,
+        user_id: int,
+        name: str,
+        gender: Gender,
+        class_index: int,
+        subclass_index: int,
     ) -> None:
         character_class = game.classes[class_index]
-        subclass = character_class.subclasses[subclass_index] if character_class.subclasses else None
-        turn = await game.start_new(user_id, name, character_class, subclass)
+        subclasses = game.subclasses_of(character_class)
+        subclass = subclasses[subclass_index] if subclasses else None
+        turn = await game.start_new(user_id, name, gender, character_class, subclass)
         character = turn.state.character
         await message.answer(
             f"<b>{html.escape(character.name)}</b>\n<i>{html.escape(character.origin)}</i>"
@@ -169,9 +203,11 @@ def build_router(game: GameService) -> Router:
             return
         await message.answer(HELP)
         if game.classes:
-            await offer_classes(message)
+            await state.set_state(Creation.building)
+            await offer_gender(message)
             return
-        await create_and_start(message, user.id, user.first_name or "Путник", 0, 0)
+        turn = await game.start_new(user.id, user.first_name or "Путник")
+        await send_turn(message, turn)
 
     @router.message(Command("new"))
     async def on_new(message: Message, state: FSMContext) -> None:
@@ -180,7 +216,8 @@ def build_router(game: GameService) -> Router:
             return
         await state.clear()
         if game.classes:
-            await offer_classes(message, with_world=False)
+            await state.set_state(Creation.building)
+            await offer_gender(message, with_world=False)
             return
         turn = await game.start_new(user.id, user.first_name or "Путник")
         await send_turn(message, turn)
@@ -205,27 +242,42 @@ def build_router(game: GameService) -> Router:
 
     # --- шаги создания -------------------------------------------------
 
+    @router.callback_query(F.data.startswith("g:"))
+    async def on_gender(callback: CallbackQuery, state: FSMContext) -> None:
+        if callback.message is None:
+            return
+        gender = parse_gender(callback.data or "")
+        await callback.answer()
+        if gender is None:
+            await callback.message.answer("Не понял выбор. /new — начать сначала.")
+            return
+        await _drop_buttons(callback)
+        await state.set_state(Creation.building)
+        await state.update_data(gender=gender.value)
+        await offer_classes(callback.message, gender)
+
     @router.callback_query(F.data.startswith("c:"))
     async def on_class(callback: CallbackQuery, state: FSMContext) -> None:
         if callback.message is None:
             return
+        gender = await _gender_from(state)
         await callback.answer()
         await _drop_buttons(callback)
         if callback.data == "c:back":
-            await state.clear()
-            await offer_classes(callback.message, with_world=False)
+            await offer_classes(callback.message, gender)
             return
         index = parse_class(callback.data or "")
         if index is None or not 0 <= index < len(game.classes):
             await callback.message.answer("Не понял выбор. /new — начать сначала.")
             return
-        await offer_subclasses(callback.message, index)
+        await offer_subclasses(callback.message, index, gender)
 
     @router.callback_query(F.data.startswith("s:"))
     async def on_subclass(callback: CallbackQuery, state: FSMContext) -> None:
         if callback.message is None:
             return
         parsed = parse_subclass(callback.data or "")
+        gender = await _gender_from(state)
         await callback.answer()
         if parsed is None:
             await callback.message.answer("Не понял выбор. /new — начать сначала.")
@@ -234,14 +286,14 @@ def build_router(game: GameService) -> Router:
         if not 0 <= class_index < len(game.classes):
             await callback.message.answer("Не понял выбор. /new — начать сначала.")
             return
-        subclasses = game.classes[class_index].subclasses
+        subclasses = game.subclasses_of(game.classes[class_index])
         if not 0 <= subclass_index < len(subclasses):
             await callback.message.answer("Не понял выбор. /new — начать сначала.")
             return
         await _drop_buttons(callback)
         await state.set_state(Creation.waiting_for_name)
         await state.update_data(class_index=class_index, subclass_index=subclass_index)
-        await ask_name(callback.message, class_index, subclass_index)
+        await ask_name(callback.message, class_index, subclass_index, gender)
 
     @router.callback_query(F.data == SKIP_NAME)
     async def on_skip_name(callback: CallbackQuery, state: FSMContext) -> None:
@@ -253,10 +305,16 @@ def build_router(game: GameService) -> Router:
         if "class_index" not in data:
             await callback.message.answer("Создание сорвалось. /new — начать сначала.")
             return
+        gender = await _gender_from(state)
         await state.clear()
         # Пустое имя — персонаж будет зваться по своему ремеслу.
         await create_and_start(
-            callback.message, callback.from_user.id, "", data["class_index"], data["subclass_index"]
+            callback.message,
+            callback.from_user.id,
+            "",
+            gender,
+            data["class_index"],
+            data["subclass_index"],
         )
 
     @router.message(Creation.waiting_for_name)
@@ -273,10 +331,19 @@ def build_router(game: GameService) -> Router:
             await state.clear()
             await message.answer("Создание сорвалось. /new — начать сначала.")
             return
+        gender = await _gender_from(state)
         await state.clear()
         await create_and_start(
-            message, user.id, name, data["class_index"], data["subclass_index"]
+            message, user.id, name, gender, data["class_index"], data["subclass_index"]
         )
+
+    async def _gender_from(state: FSMContext) -> Gender:
+        """Пол из незавершённого создания; по умолчанию — мужской."""
+        data = await state.get_data()
+        try:
+            return Gender(data.get("gender", Gender.MALE.value))
+        except ValueError:
+            return Gender.MALE
 
     # --- действия в сцене ----------------------------------------------
 

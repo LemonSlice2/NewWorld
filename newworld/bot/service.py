@@ -14,7 +14,7 @@ from ..core.content import CharacterClass, Story, Subclass
 from ..core.creation import build_character, roll_character, starting_flags
 from ..core.engine import Engine, InvalidAction, Turn
 from ..core.events import SceneEntered
-from ..core.models import GameState
+from ..core.models import GameState, Gender
 from ..narrator.base import Narrator
 from ..storage import SaveStore
 
@@ -54,20 +54,25 @@ class GameService:
     def classes(self) -> tuple[CharacterClass, ...]:
         return self.story.classes
 
+    def subclasses_of(self, character_class: CharacterClass) -> tuple[Subclass, ...]:
+        """Специализации класса — уже в том виде, в каком он их берёт."""
+        return self.story.subclasses_of(character_class)
+
     async def start_new(
         self,
         user_id: int,
         name: str,
+        gender: Gender = Gender.MALE,
         character_class: CharacterClass | None = None,
         subclass: Subclass | None = None,
     ) -> Turn:
         """Начать забег. Без класса персонаж бросается случайно."""
         seed = random.SystemRandom().randrange(2**31)
         if character_class is not None:
-            character = build_character(name, character_class, subclass)
+            character = build_character(name, gender, character_class, subclass)
             flags = starting_flags(character_class, subclass)
         else:
-            character = roll_character(name, random.Random(seed))
+            character = roll_character(name, random.Random(seed), gender)
             flags = ()
         turn = self.engine.start(character, seed=seed, flags=flags)
         await self.store.save(user_id, self.story_id, turn.state)
