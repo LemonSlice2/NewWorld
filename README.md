@@ -19,7 +19,7 @@ python -m newworld.cli content/olhovets.yaml
 python -m newworld.cli content/olhovets.yaml --seed 42
 
 # запустить бота
-export NEWWORLD_BOT_TOKEN="токен от @BotFather"
+cp .env.example .env     # и вписать туда токен от @BotFather
 python -m newworld.bot content/olhovets.yaml
 ```
 
@@ -38,9 +38,12 @@ python -m pytest
 Дальше в терминале Codespaces:
 
 ```bash
-export NEWWORLD_BOT_TOKEN="токен от @BotFather"
+cp .env.example .env     # и вписать туда токен от @BotFather
 python -m newworld.bot content/olhovets.yaml
 ```
+
+Файл `.env` не попадает в репозиторий и переживает перезапуск машины,
+поэтому вводить токен заново не придётся.
 
 Codespaces засыпает после 30 минут простоя, и бот вместе с ним — это
 площадка для проверки, а не постоянный хостинг.
