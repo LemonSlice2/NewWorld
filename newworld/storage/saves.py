@@ -4,8 +4,9 @@
 пока сюжет не требует запросов «найди всех, у кого есть фонарь», отдельные
 колонки под каждое поле только мешали бы менять модель.
 
-SQLite синхронный, поэтому публичные методы — асинхронные обёртки: под
-asyncio нельзя блокировать цикл событий обращением к диску.
+SQLite синхронный, и десктопная оболочка работает с ним напрямую. Боту
+же нельзя блокировать цикл событий обращением к диску, поэтому для него
+те же методы обёрнуты в асинхронные.
 """
 
 from __future__ import annotations
@@ -43,9 +44,9 @@ class SaveStore:
         with self._connect() as connection:
             connection.executescript(_SCHEMA)
 
-    # --- синхронное ядро ----------------------------------------------
+    # --- синхронный доступ (десктоп, тесты) ---------------------------
 
-    def _load(self, user_id: int) -> tuple[str, GameState] | None:
+    def load_sync(self, user_id: int) -> tuple[str, GameState] | None:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT story_id, state FROM saves WHERE user_id = ?", (user_id,)
@@ -55,7 +56,7 @@ class SaveStore:
         story_id, payload = row
         return story_id, GameState.from_dict(json.loads(payload))
 
-    def _save(self, user_id: int, story_id: str, state: GameState) -> None:
+    def save_sync(self, user_id: int, story_id: str, state: GameState) -> None:
         payload = json.dumps(state.to_dict(), ensure_ascii=False)
         with self._connect() as connection:
             connection.execute(
@@ -70,17 +71,17 @@ class SaveStore:
                 (user_id, story_id, payload),
             )
 
-    def _delete(self, user_id: int) -> None:
+    def delete_sync(self, user_id: int) -> None:
         with self._connect() as connection:
             connection.execute("DELETE FROM saves WHERE user_id = ?", (user_id,))
 
     # --- асинхронный интерфейс ----------------------------------------
 
     async def load(self, user_id: int) -> tuple[str, GameState] | None:
-        return await asyncio.to_thread(self._load, user_id)
+        return await asyncio.to_thread(self.load_sync, user_id)
 
     async def save(self, user_id: int, story_id: str, state: GameState) -> None:
-        await asyncio.to_thread(self._save, user_id, story_id, state)
+        await asyncio.to_thread(self.save_sync, user_id, story_id, state)
 
     async def delete(self, user_id: int) -> None:
-        await asyncio.to_thread(self._delete, user_id)
+        await asyncio.to_thread(self.delete_sync, user_id)

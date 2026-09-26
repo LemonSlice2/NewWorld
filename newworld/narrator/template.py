@@ -32,8 +32,11 @@ class TemplateNarrator(Narrator):
     словам «тебе не повезло».
     """
 
-    def __init__(self, show_rolls: bool = True) -> None:
+    def __init__(self, show_rolls: bool = True, show_scene_title: bool = True) -> None:
         self.show_rolls = show_rolls
+        # Оболочка может рисовать заголовок сцены сама — тогда второй
+        # заголовок в тексте только мешает.
+        self.show_scene_title = show_scene_title
 
     def narrate(self, turn: Turn) -> str:
         parts: list[str] = []
@@ -57,7 +60,8 @@ class TemplateNarrator(Narrator):
         entered = [e for e in turn.events if isinstance(e, SceneEntered)]
         if entered:
             scene = turn.scene
-            parts.append(f"<b>{scene.title}</b>\n{scene.text}")
+            heading = f"<b>{scene.title}</b>\n" if self.show_scene_title else ""
+            parts.append(f"{heading}{scene.text}")
 
         return inflect("\n\n".join(p for p in parts if p).strip(), gender)
 

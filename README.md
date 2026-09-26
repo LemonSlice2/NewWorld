@@ -16,6 +16,10 @@
 ```bash
 pip install -r requirements-dev.txt
 
+# игра в окне на компьютере
+pip install -r requirements-desktop.txt
+python -m newworld.desktop content/olhovets.yaml
+
 # сыграть в терминале — ни токена, ни сети не нужно
 python -m newworld.cli content/olhovets.yaml
 
@@ -72,6 +76,7 @@ newworld/
     template.py    рассказчик на авторском тексте (без нейросети)
   storage/       сохранения в SQLite
   bot/           Telegram: тонкий слой поверх игры
+  desktop/       окно игры на компьютере (Qt)
   cli.py         игра в терминале
 content/         сюжеты
 tests/           тесты

@@ -19,6 +19,7 @@ newworld/core/      правила: кубы, состояние, сюжет, д
 newworld/narrator/  факты -> текст (шаблонный; сюда же встанет нейросетевой)
 newworld/storage/   сохранения (SQLite)
 newworld/bot/       Telegram
+newworld/desktop/   окно на компьютере (Qt)
 newworld/cli.py     терминал
 content/            сюжеты (YAML)
 assets/             картинки (полоса здоровья)
@@ -31,6 +32,7 @@ tools/              вспомогательные скрипты
 ## Команды
 
 ```bash
+python -m newworld.desktop content/olhovets.yaml  # играть в окне
 python -m newworld.cli content/olhovets.yaml     # играть в терминале
 python -m newworld.bot content/olhovets.yaml     # Telegram (нужен .env)
 python -m pytest                                  # все тесты
